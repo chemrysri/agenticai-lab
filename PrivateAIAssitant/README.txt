@@ -83,26 +83,6 @@ v0.1:
 
 v0.2:
 - Multiple chat sessions
-- Rename chats
-- Delete individual chats
-- Export chat as Markdown
-
-v0.3:
-- Upload PDFs
-- RAG over documents
-- Document search
-
-v0.4:
-- Local tools
-- Calculator
-- Expense tracker
-- Notes writer
-
-v0.5:
-- Permission system for tools
-
-v0.6:
-- Hosted demo version
 
 Notes:
 This app is private as long as it only talks to the local Ollama server.
