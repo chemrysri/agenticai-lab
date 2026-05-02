@@ -1,109 +1,143 @@
-import sqlite3
-from datetime import datetime
-import requests
+import uuid
+
 import streamlit as st
 
-OLLAMA_URL = "http://localhost:11434/api/chat"
-DEFAULT_MODEL = "llama3.2:3b"
-DB_PATH = "assistant.db"
-
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS chats (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-
-    conn.commit()
-    conn.close()
+from chats import (
+    clear_chat_history,
+    create_chat_session,
+    get_latest_chat_session,
+    get_user_chat_sessions,
+    load_messages,
+    save_message,
+    update_chat_title_if_needed,
+)
+from config import DEFAULT_MODEL
+from db import init_db
+from ollama_client import ask_ollama
+from users import get_all_users, get_or_create_user
 
 
-def save_message(role, content):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+def initialize_session_state():
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = str(uuid.uuid4())
 
-    cursor.execute(
-        """
-        INSERT INTO chats (role, content, created_at)
-        VALUES (?, ?, ?)
-        """,
-        (role, content, datetime.now().isoformat()),
-    )
+    if "user" not in st.session_state:
+        st.session_state.user = None
 
-    conn.commit()
-    conn.close()
+    if "chat_id" not in st.session_state:
+        st.session_state.chat_id = None
 
 
-def load_messages():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+def show_user_selection():
+    known_users = get_all_users()
 
-    cursor.execute("SELECT role, content FROM chats ORDER BY id ASC")
-    rows = cursor.fetchall()
+    st.subheader("Choose user")
 
-    conn.close()
+    selected_user = ""
 
-    return [{"role": role, "content": content} for role, content in rows]
-
-
-def clear_chat_history():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    cursor.execute("DELETE FROM chats")
-
-    conn.commit()
-    conn.close()
-
-
-def ask_ollama(messages, model):
-    payload = {
-        "model": model,
-        "messages": messages,
-        "stream": False,
-    }
-
-    try:
-        response = requests.post(OLLAMA_URL, json=payload, timeout=120)
-        response.raise_for_status()
-        data = response.json()
-        return data["message"]["content"]
-
-    except requests.exceptions.ConnectionError:
-        return (
-            "I could not connect to Ollama. "
-            "Please make sure Ollama is installed and running."
+    if known_users:
+        selected_user = st.selectbox(
+            "Known users",
+            options=[""] + known_users,
         )
 
-    except requests.exceptions.Timeout:
-        return "The model took too long to respond. Try a smaller model."
+    new_username = st.text_input("Or enter a new username")
 
-    except Exception as error:
-        return f"Something went wrong: {error}"
+    if st.button("Continue"):
+        username_to_use = new_username.strip() or selected_user
+
+        if not username_to_use:
+            st.warning("Please select or enter a username.")
+            return
+
+        user = get_or_create_user(username_to_use)
+
+        latest_chat = get_latest_chat_session(user["user_id"])
+
+        if latest_chat:
+            chat_id = latest_chat["chat_id"]
+        else:
+            chat_id = create_chat_session(user["user_id"])
+
+        st.session_state.user = user
+        st.session_state.chat_id = chat_id
+
+        st.rerun()
 
 
-def main():
-    st.set_page_config(
-        page_title="Private AI Assistant",
-        page_icon="🤖",
-        layout="centered",
-    )
+def ensure_current_chat_exists(user):
+    if st.session_state.chat_id:
+        return
 
-    init_db()
+    latest_chat = get_latest_chat_session(user["user_id"])
 
-    st.title("🤖 Private AI Assistant")
-    st.caption("Local chatbot powered by Ollama + Streamlit + SQLite")
+    if latest_chat:
+        st.session_state.chat_id = latest_chat["chat_id"]
+    else:
+        st.session_state.chat_id = create_chat_session(user["user_id"])
 
+
+def show_sidebar(user):
     with st.sidebar:
         st.header("Settings")
+
+        st.subheader("Current user")
+        st.write(user["username"])
+
+        st.subheader("Known users")
+
+        for username in get_all_users():
+            st.write(f"- {username}")
+
+        st.subheader("Chats")
+
+        chat_sessions = get_user_chat_sessions(user["user_id"])
+
+        if chat_sessions:
+            chat_id_to_label = {
+                chat["chat_id"]: chat["title"]
+                for chat in chat_sessions
+            }
+
+            chat_ids = [chat["chat_id"] for chat in chat_sessions]
+
+            if st.session_state.chat_id not in chat_ids:
+                st.session_state.chat_id = chat_ids[0]
+
+            selected_chat_id = st.selectbox(
+                "Your chats",
+                options=chat_ids,
+                format_func=lambda chat_id: chat_id_to_label.get(
+                    chat_id,
+                    "Untitled chat",
+                ),
+                index=chat_ids.index(st.session_state.chat_id),
+            )
+
+            if selected_chat_id != st.session_state.chat_id:
+                st.session_state.chat_id = selected_chat_id
+                st.rerun()
+
+        if st.button("New chat"):
+            st.session_state.chat_id = create_chat_session(user["user_id"])
+            st.rerun()
+
+        if st.button("Clear current chat history"):
+            clear_chat_history(
+                user_id=user["user_id"],
+                chat_id=st.session_state.chat_id,
+            )
+            st.rerun()
+
+        if st.button("Switch user"):
+            st.session_state.user = None
+            st.session_state.chat_id = None
+            st.rerun()
+
+        st.subheader("Current IDs")
+        st.caption(f"User ID: {user['user_id']}")
+        st.caption(f"Session ID: {st.session_state.session_id}")
+        st.caption(f"Chat ID: {st.session_state.chat_id}")
 
         model = st.text_input(
             "Ollama model",
@@ -120,11 +154,14 @@ def main():
             height=120,
         )
 
-        if st.button("Clear chat history"):
-            clear_chat_history()
-            st.rerun()
+    return model, system_prompt
 
-    stored_messages = load_messages()
+
+def show_chat(user, model, system_prompt):
+    stored_messages = load_messages(
+        user_id=user["user_id"],
+        chat_id=st.session_state.chat_id,
+    )
 
     for message in stored_messages:
         with st.chat_message(message["role"]):
@@ -132,21 +169,86 @@ def main():
 
     user_input = st.chat_input("Ask something...")
 
-    if user_input:
-        save_message("user", user_input)
+    if not user_input:
+        return
 
-        with st.chat_message("user"):
-            st.markdown(user_input)
+    save_message(
+        user=user,
+        session_id=st.session_state.session_id,
+        chat_id=st.session_state.chat_id,
+        role="user",
+        content=user_input,
+    )
 
-        messages_for_model = [{"role": "system", "content": system_prompt}]
-        messages_for_model.extend(load_messages())
+    update_chat_title_if_needed(
+        user_id=user["user_id"],
+        chat_id=st.session_state.chat_id,
+        first_user_message=user_input,
+    )
 
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking locally..."):
-                assistant_reply = ask_ollama(messages_for_model, model)
-                st.markdown(assistant_reply)
+    with st.chat_message("user"):
+        st.markdown(user_input)
 
-        save_message("assistant", assistant_reply)
+    messages_for_model = [
+        {
+            "role": "system",
+            "content": system_prompt,
+        }
+    ]
+
+    messages_for_model.extend(
+        load_messages(
+            user_id=user["user_id"],
+            chat_id=st.session_state.chat_id,
+        )
+    )
+
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking locally..."):
+            assistant_reply = ask_ollama(
+                messages=messages_for_model,
+                model=model,
+            )
+
+            st.markdown(assistant_reply)
+
+    save_message(
+        user=user,
+        session_id=st.session_state.session_id,
+        chat_id=st.session_state.chat_id,
+        role="assistant",
+        content=assistant_reply,
+    )
+
+
+def main():
+    st.set_page_config(
+        page_title="Private AI Assistant",
+        page_icon="🤖",
+        layout="centered",
+    )
+
+    init_db()
+    initialize_session_state()
+
+    st.title("🤖 Private AI Assistant")
+    st.caption("Local chatbot powered by Ollama + Streamlit + SQLite")
+
+    if st.session_state.user is None:
+        show_user_selection()
+        st.stop()
+
+    user = st.session_state.user
+
+    ensure_current_chat_exists(user)
+
+    model, system_prompt = show_sidebar(user)
+
+    show_chat(
+        user=user,
+        model=model,
+        system_prompt=system_prompt,
+    )
 
 
 if __name__ == "__main__":
