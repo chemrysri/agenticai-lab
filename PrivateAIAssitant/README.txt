@@ -23,9 +23,12 @@ Project Structure:
 private-ai-assistant/
 │
 ├── app.py
-├── requirements.txt
-├── assistant.db
-└── README.txt
+├── config.py
+├── db.py
+├── users.py
+├── chats.py
+├── ollama_client.py
+└── requirements.txt
 
 Setup Steps:
 
@@ -35,19 +38,21 @@ Setup Steps:
 
    ollama pull llama3.2:3b
 
-3. Create a Python virtual environment:
+3. Ollama runs by default and exposes api as - http://localhost:11434/
+
+4. Create a Python virtual environment:
 
    python -m venv venv
 
-4. Activate virtual environment:
+5. Activate virtual environment:
 
    .\venv\Scripts\activate
 
-5. Install dependencies:
+6. Install dependencies:
 
    pip install -r requirements.txt
 
-6. Run the app:
+7. Run the app:
 
    streamlit run app.py
 

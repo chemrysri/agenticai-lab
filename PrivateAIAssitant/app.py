@@ -1,31 +1,28 @@
-import uuid
-
 import streamlit as st
 
-from chats import (
-    clear_chat_history,
-    create_chat_session,
-    get_latest_chat_session,
-    get_user_chat_sessions,
-    load_messages,
-    save_message,
-    update_chat_title_if_needed,
-)
 from config import DEFAULT_MODEL
 from db import init_db
+from messages import clear_thread_messages, load_messages, save_message
 from ollama_client import ask_ollama
+from projects import create_project, get_latest_project, get_user_projects
+from threads import (
+    create_thread,
+    get_latest_thread,
+    get_project_threads,
+    update_thread_title_if_needed,
+)
 from users import get_all_users, get_or_create_user
 
 
 def initialize_session_state():
-    if "session_id" not in st.session_state:
-        st.session_state.session_id = str(uuid.uuid4())
-
     if "user" not in st.session_state:
         st.session_state.user = None
 
-    if "chat_id" not in st.session_state:
-        st.session_state.chat_id = None
+    if "project_id" not in st.session_state:
+        st.session_state.project_id = None
+
+    if "thread_id" not in st.session_state:
+        st.session_state.thread_id = None
 
 
 def show_user_selection():
@@ -52,29 +49,55 @@ def show_user_selection():
 
         user = get_or_create_user(username_to_use)
 
-        latest_chat = get_latest_chat_session(user["user_id"])
+        latest_project = get_latest_project(user["user_id"])
 
-        if latest_chat:
-            chat_id = latest_chat["chat_id"]
+        if latest_project:
+            project_id = latest_project["project_id"]
         else:
-            chat_id = create_chat_session(user["user_id"])
+            project_id = create_project(
+                user_id=user["user_id"],
+                title="Default project",
+            )
+
+        latest_thread = get_latest_thread(project_id)
+
+        if latest_thread:
+            thread_id = latest_thread["thread_id"]
+        else:
+            thread_id = create_thread(
+                project_id=project_id,
+                title="New thread",
+            )
 
         st.session_state.user = user
-        st.session_state.chat_id = chat_id
+        st.session_state.project_id = project_id
+        st.session_state.thread_id = thread_id
 
         st.rerun()
 
 
-def ensure_current_chat_exists(user):
-    if st.session_state.chat_id:
-        return
+def ensure_current_project_and_thread_exist(user):
+    if not st.session_state.project_id:
+        latest_project = get_latest_project(user["user_id"])
 
-    latest_chat = get_latest_chat_session(user["user_id"])
+        if latest_project:
+            st.session_state.project_id = latest_project["project_id"]
+        else:
+            st.session_state.project_id = create_project(
+                user_id=user["user_id"],
+                title="Default project",
+            )
 
-    if latest_chat:
-        st.session_state.chat_id = latest_chat["chat_id"]
-    else:
-        st.session_state.chat_id = create_chat_session(user["user_id"])
+    if not st.session_state.thread_id:
+        latest_thread = get_latest_thread(st.session_state.project_id)
+
+        if latest_thread:
+            st.session_state.thread_id = latest_thread["thread_id"]
+        else:
+            st.session_state.thread_id = create_thread(
+                project_id=st.session_state.project_id,
+                title="New thread",
+            )
 
 
 def show_sidebar(user):
@@ -85,59 +108,138 @@ def show_sidebar(user):
         st.write(user["username"])
 
         st.subheader("Known users")
-
         for username in get_all_users():
             st.write(f"- {username}")
 
-        st.subheader("Chats")
+        st.divider()
 
-        chat_sessions = get_user_chat_sessions(user["user_id"])
+        st.subheader("Projects")
 
-        if chat_sessions:
-            chat_id_to_label = {
-                chat["chat_id"]: chat["title"]
-                for chat in chat_sessions
+        projects = get_user_projects(user["user_id"])
+
+        if projects:
+            project_id_to_label = {
+                project["project_id"]: project["title"]
+                for project in projects
             }
 
-            chat_ids = [chat["chat_id"] for chat in chat_sessions]
+            project_ids = [
+                project["project_id"]
+                for project in projects
+            ]
 
-            if st.session_state.chat_id not in chat_ids:
-                st.session_state.chat_id = chat_ids[0]
+            if st.session_state.project_id not in project_ids:
+                st.session_state.project_id = project_ids[0]
 
-            selected_chat_id = st.selectbox(
-                "Your chats",
-                options=chat_ids,
-                format_func=lambda chat_id: chat_id_to_label.get(
-                    chat_id,
-                    "Untitled chat",
+            selected_project_id = st.selectbox(
+                "Your projects",
+                options=project_ids,
+                format_func=lambda project_id: project_id_to_label.get(
+                    project_id,
+                    "Untitled project",
                 ),
-                index=chat_ids.index(st.session_state.chat_id),
+                index=project_ids.index(st.session_state.project_id),
             )
 
-            if selected_chat_id != st.session_state.chat_id:
-                st.session_state.chat_id = selected_chat_id
+            if selected_project_id != st.session_state.project_id:
+                st.session_state.project_id = selected_project_id
+
+                latest_thread = get_latest_thread(selected_project_id)
+
+                if latest_thread:
+                    st.session_state.thread_id = latest_thread["thread_id"]
+                else:
+                    st.session_state.thread_id = create_thread(
+                        project_id=selected_project_id,
+                        title="New thread",
+                    )
+
                 st.rerun()
 
-        if st.button("New chat"):
-            st.session_state.chat_id = create_chat_session(user["user_id"])
+        new_project_title = st.text_input(
+            "New project name",
+            placeholder="Example: Private AI Assistant",
+        )
+
+        if st.button("Create project"):
+            title = new_project_title.strip() or "Untitled project"
+
+            project_id = create_project(
+                user_id=user["user_id"],
+                title=title,
+            )
+
+            thread_id = create_thread(
+                project_id=project_id,
+                title="New thread",
+            )
+
+            st.session_state.project_id = project_id
+            st.session_state.thread_id = thread_id
+
             st.rerun()
 
-        if st.button("Clear current chat history"):
-            clear_chat_history(
-                user_id=user["user_id"],
-                chat_id=st.session_state.chat_id,
+        st.divider()
+
+        st.subheader("Threads")
+
+        threads = get_project_threads(st.session_state.project_id)
+
+        if threads:
+            thread_id_to_label = {
+                thread["thread_id"]: thread["title"]
+                for thread in threads
+            }
+
+            thread_ids = [
+                thread["thread_id"]
+                for thread in threads
+            ]
+
+            if st.session_state.thread_id not in thread_ids:
+                st.session_state.thread_id = thread_ids[0]
+
+            selected_thread_id = st.selectbox(
+                "Project threads",
+                options=thread_ids,
+                format_func=lambda thread_id: thread_id_to_label.get(
+                    thread_id,
+                    "Untitled thread",
+                ),
+                index=thread_ids.index(st.session_state.thread_id),
+            )
+
+            if selected_thread_id != st.session_state.thread_id:
+                st.session_state.thread_id = selected_thread_id
+                st.rerun()
+
+        if st.button("New thread"):
+            st.session_state.thread_id = create_thread(
+                project_id=st.session_state.project_id,
+                title="New thread",
             )
             st.rerun()
+
+        if st.button("Clear current thread history"):
+            clear_thread_messages(
+                thread_id=st.session_state.thread_id,
+            )
+            st.rerun()
+
+        st.divider()
 
         if st.button("Switch user"):
             st.session_state.user = None
-            st.session_state.chat_id = None
+            st.session_state.project_id = None
+            st.session_state.thread_id = None
             st.rerun()
 
         st.subheader("Current IDs")
         st.caption(f"User ID: {user['user_id']}")
-        st.caption(f"Session ID: {st.session_state.session_id}")
-        st.caption(f"Chat ID: {st.session_state.chat_id}")
+        st.caption(f"Project ID: {st.session_state.project_id}")
+        st.caption(f"Thread ID: {st.session_state.thread_id}")
+
+        st.divider()
 
         model = st.text_input(
             "Ollama model",
@@ -159,8 +261,7 @@ def show_sidebar(user):
 
 def show_chat(user, model, system_prompt):
     stored_messages = load_messages(
-        user_id=user["user_id"],
-        chat_id=st.session_state.chat_id,
+        thread_id=st.session_state.thread_id,
     )
 
     for message in stored_messages:
@@ -173,16 +274,13 @@ def show_chat(user, model, system_prompt):
         return
 
     save_message(
-        user=user,
-        session_id=st.session_state.session_id,
-        chat_id=st.session_state.chat_id,
+        thread_id=st.session_state.thread_id,
         role="user",
         content=user_input,
     )
 
-    update_chat_title_if_needed(
-        user_id=user["user_id"],
-        chat_id=st.session_state.chat_id,
+    update_thread_title_if_needed(
+        thread_id=st.session_state.thread_id,
         first_user_message=user_input,
     )
 
@@ -198,8 +296,7 @@ def show_chat(user, model, system_prompt):
 
     messages_for_model.extend(
         load_messages(
-            user_id=user["user_id"],
-            chat_id=st.session_state.chat_id,
+            thread_id=st.session_state.thread_id,
         )
     )
 
@@ -213,9 +310,7 @@ def show_chat(user, model, system_prompt):
             st.markdown(assistant_reply)
 
     save_message(
-        user=user,
-        session_id=st.session_state.session_id,
-        chat_id=st.session_state.chat_id,
+        thread_id=st.session_state.thread_id,
         role="assistant",
         content=assistant_reply,
     )
@@ -240,7 +335,7 @@ def main():
 
     user = st.session_state.user
 
-    ensure_current_chat_exists(user)
+    ensure_current_project_and_thread_exist(user)
 
     model, system_prompt = show_sidebar(user)
 
