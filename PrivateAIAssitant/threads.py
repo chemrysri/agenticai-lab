@@ -1,10 +1,16 @@
 import uuid
 from datetime import datetime
 
+from config import DEFAULT_CONTEXT_COMPACTION_N, DEFAULT_SYSTEM_PROMPT
 from db import get_connection
 
 
-def create_thread(project_id, title="New thread"):
+def create_thread(
+    project_id,
+    title="New thread",
+    system_prompt=DEFAULT_SYSTEM_PROMPT,
+    context_compaction_n=DEFAULT_CONTEXT_COMPACTION_N,
+):
     thread_id = str(uuid.uuid4())
     now = datetime.now().isoformat()
 
@@ -17,15 +23,19 @@ def create_thread(project_id, title="New thread"):
             thread_id,
             project_id,
             title,
+            system_prompt,
+            context_compaction_n,
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             thread_id,
             project_id,
             title,
+            system_prompt,
+            context_compaction_n,
             now,
             now,
         ),
@@ -47,6 +57,85 @@ def create_thread(project_id, title="New thread"):
     conn.close()
 
     return thread_id
+
+
+def get_thread(thread_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            thread_id,
+            project_id,
+            title,
+            system_prompt,
+            context_compaction_n,
+            created_at,
+            updated_at
+        FROM chat_threads
+        WHERE thread_id = ?
+        """,
+        (thread_id,),
+    )
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "thread_id": row[0],
+        "project_id": row[1],
+        "title": row[2],
+        "system_prompt": row[3],
+        "context_compaction_n": row[4],
+        "created_at": row[5],
+        "updated_at": row[6],
+    }
+
+
+def update_thread_settings(thread_id, system_prompt, context_compaction_n):
+    now = datetime.now().isoformat()
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE chat_threads
+        SET system_prompt = ?,
+            context_compaction_n = ?,
+            updated_at = ?
+        WHERE thread_id = ?
+        """,
+        (
+            system_prompt,
+            context_compaction_n,
+            now,
+            thread_id,
+        ),
+    )
+
+    cursor.execute(
+        """
+        UPDATE projects
+        SET updated_at = ?
+        WHERE project_id = (
+            SELECT project_id
+            FROM chat_threads
+            WHERE thread_id = ?
+        )
+        """,
+        (
+            now,
+            thread_id,
+        ),
+    )
+
+    conn.commit()
+    conn.close()
 
 
 def get_latest_thread(project_id):

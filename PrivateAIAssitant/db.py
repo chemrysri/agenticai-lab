@@ -6,7 +6,7 @@ from config import DB_PATH
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
 
-    # Required for SQLite foreign key constraints to actually work.
+    # SQLite does not enforce foreign keys unless this is enabled per connection.
     conn.execute("PRAGMA foreign_keys = ON")
 
     return conn
@@ -49,8 +49,12 @@ def init_db():
             thread_id TEXT PRIMARY KEY,
             project_id TEXT NOT NULL,
             title TEXT NOT NULL,
+            system_prompt TEXT NOT NULL,
+            context_compaction_n INTEGER NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
+
+            CHECK (context_compaction_n >= 2),
 
             FOREIGN KEY (project_id)
                 REFERENCES projects (project_id)
@@ -130,10 +134,10 @@ def init_db():
 
 def reset_db():
     """
-    Use this only when you intentionally want to destroy
-    the local database schema and recreate it from scratch.
+    Destroys and recreates the local database.
 
-    Do not call this automatically from the Streamlit app on every rerun.
+    Do not call this automatically inside app.py, because Streamlit reruns
+    the script often and would keep wiping your data.
     """
     conn = get_connection()
     cursor = conn.cursor()

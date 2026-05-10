@@ -1,6 +1,7 @@
 import streamlit as st
 
 from config import DEFAULT_MODEL
+from context_manager import build_messages_for_model, maybe_compact_context
 from db import init_db
 from messages import clear_thread_messages, load_messages, save_message
 from ollama_client import ask_ollama
@@ -9,6 +10,8 @@ from threads import (
     create_thread,
     get_latest_thread,
     get_project_threads,
+    get_thread,
+    update_thread_settings,
     update_thread_title_if_needed,
 )
 from users import get_all_users, get_or_create_user
@@ -247,19 +250,42 @@ def show_sidebar(user):
             help="Example: llama3.2:3b, gemma3:4b, qwen3:4b",
         )
 
+        current_thread = get_thread(st.session_state.thread_id)
+
+        st.subheader("Thread settings")
+
         system_prompt = st.text_area(
-            "Assistant behavior",
-            value=(
-                "You are a helpful private AI assistant. "
-                "Give clear, practical, beginner-friendly answers."
-            ),
+            "Thread system instructions",
+            value=current_thread["system_prompt"],
             height=120,
+            key=f"system_prompt_{st.session_state.thread_id}",
         )
 
-    return model, system_prompt
+        context_compaction_n = st.number_input(
+            "Compact context every N messages",
+            min_value=2,
+            max_value=100,
+            value=int(current_thread["context_compaction_n"]),
+            step=1,
+            help=(
+                "Counts total messages, meaning user + assistant messages. "
+                "For example, 10 means roughly every 5 back-and-forth turns."
+            ),
+            key=f"context_compaction_n_{st.session_state.thread_id}",
+        )
+
+        if st.button("Save thread settings"):
+            update_thread_settings(
+                thread_id=st.session_state.thread_id,
+                system_prompt=system_prompt,
+                context_compaction_n=int(context_compaction_n),
+            )
+            st.success("Thread settings saved.")
+
+    return model, system_prompt, int(context_compaction_n)
 
 
-def show_chat(user, model, system_prompt):
+def show_chat(user, model, system_prompt, context_compaction_n):
     stored_messages = load_messages(
         thread_id=st.session_state.thread_id,
     )
@@ -287,17 +313,9 @@ def show_chat(user, model, system_prompt):
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    messages_for_model = [
-        {
-            "role": "system",
-            "content": system_prompt,
-        }
-    ]
-
-    messages_for_model.extend(
-        load_messages(
-            thread_id=st.session_state.thread_id,
-        )
+    messages_for_model = build_messages_for_model(
+        thread_id=st.session_state.thread_id,
+        system_prompt=system_prompt,
     )
 
     with st.chat_message("assistant"):
@@ -314,6 +332,13 @@ def show_chat(user, model, system_prompt):
         role="assistant",
         content=assistant_reply,
     )
+
+    with st.spinner("Updating compact thread context if needed..."):
+        maybe_compact_context(
+            thread_id=st.session_state.thread_id,
+            model=model,
+            context_compaction_n=context_compaction_n,
+        )
 
 
 def main():
@@ -337,12 +362,13 @@ def main():
 
     ensure_current_project_and_thread_exist(user)
 
-    model, system_prompt = show_sidebar(user)
+    model, system_prompt, context_compaction_n = show_sidebar(user)
 
     show_chat(
         user=user,
         model=model,
         system_prompt=system_prompt,
+        context_compaction_n=context_compaction_n,
     )
 
 
