@@ -93,6 +93,11 @@ v0.2:
 - Multi projects, chat thread support
 - Context compaction at every N messages per thread (Default N = 10)
 
+0.2.3
+- Rename chats
+- Delete individual chats
+- Export chat as Markdown
+
 Notes:
 This app is private as long as it only talks to the local Ollama server.
 External tools such as web search, email, or cloud hosting may involve external services later.

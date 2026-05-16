@@ -3,14 +3,17 @@ import streamlit as st
 from config import DEFAULT_MODEL
 from context_manager import build_messages_for_model, maybe_compact_context
 from db import init_db
+from export_utils import export_thread_as_markdown
 from messages import clear_thread_messages, load_messages, save_message
 from ollama_client import ask_ollama
 from projects import create_project, get_latest_project, get_user_projects
 from threads import (
     create_thread,
+    delete_thread,
     get_latest_thread,
     get_project_threads,
     get_thread,
+    rename_thread,
     update_thread_settings,
     update_thread_title_if_needed,
 )
@@ -103,6 +106,24 @@ def ensure_current_project_and_thread_exist(user):
             )
 
 
+def delete_current_thread_and_select_next():
+    deleted_project_id = delete_thread(st.session_state.thread_id)
+
+    if not deleted_project_id:
+        st.session_state.thread_id = None
+        return
+
+    remaining_threads = get_project_threads(deleted_project_id)
+
+    if remaining_threads:
+        st.session_state.thread_id = remaining_threads[0]["thread_id"]
+    else:
+        st.session_state.thread_id = create_thread(
+            project_id=deleted_project_id,
+            title="New thread",
+        )
+
+
 def show_sidebar(user):
     with st.sidebar:
         st.header("Settings")
@@ -184,7 +205,7 @@ def show_sidebar(user):
 
         st.divider()
 
-        st.subheader("Threads")
+        st.subheader("Chats / Threads")
 
         threads = get_project_threads(st.session_state.project_id)
 
@@ -203,11 +224,11 @@ def show_sidebar(user):
                 st.session_state.thread_id = thread_ids[0]
 
             selected_thread_id = st.selectbox(
-                "Project threads",
+                "Project chats",
                 options=thread_ids,
                 format_func=lambda thread_id: thread_id_to_label.get(
                     thread_id,
-                    "Untitled thread",
+                    "Untitled chat",
                 ),
                 index=thread_ids.index(st.session_state.thread_id),
             )
@@ -216,18 +237,66 @@ def show_sidebar(user):
                 st.session_state.thread_id = selected_thread_id
                 st.rerun()
 
-        if st.button("New thread"):
+        if st.button("New chat"):
             st.session_state.thread_id = create_thread(
                 project_id=st.session_state.project_id,
                 title="New thread",
             )
             st.rerun()
 
-        if st.button("Clear current thread history"):
-            clear_thread_messages(
+        current_thread = get_thread(st.session_state.thread_id)
+
+        if current_thread:
+            st.divider()
+            st.subheader("Chat actions")
+
+            new_thread_title = st.text_input(
+                "Rename current chat",
+                value=current_thread["title"],
+                key=f"rename_thread_{st.session_state.thread_id}",
+            )
+
+            if st.button("Save chat name"):
+                rename_thread(
+                    thread_id=st.session_state.thread_id,
+                    new_title=new_thread_title,
+                )
+                st.success("Chat renamed.")
+                st.rerun()
+
+            markdown_data, markdown_filename = export_thread_as_markdown(
+                user=user,
+                project_id=st.session_state.project_id,
                 thread_id=st.session_state.thread_id,
             )
-            st.rerun()
+
+            st.download_button(
+                label="Export current chat as Markdown",
+                data=markdown_data,
+                file_name=markdown_filename,
+                mime="text/markdown",
+            )
+
+            if st.button("Clear current chat history"):
+                clear_thread_messages(
+                    thread_id=st.session_state.thread_id,
+                )
+                st.rerun()
+
+            with st.expander("Delete current chat"):
+                st.warning(
+                    "This permanently deletes the current chat, including "
+                    "its messages and compacted context."
+                )
+
+                confirm_delete = st.checkbox(
+                    "I understand. Delete this chat.",
+                    key=f"confirm_delete_{st.session_state.thread_id}",
+                )
+
+                if st.button("Delete chat", disabled=not confirm_delete):
+                    delete_current_thread_and_select_next()
+                    st.rerun()
 
         st.divider()
 

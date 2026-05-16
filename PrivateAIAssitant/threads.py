@@ -138,6 +138,105 @@ def update_thread_settings(thread_id, system_prompt, context_compaction_n):
     conn.close()
 
 
+def rename_thread(thread_id, new_title):
+    title = new_title.strip()
+
+    if not title:
+        title = "Untitled thread"
+
+    now = datetime.now().isoformat()
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE chat_threads
+        SET title = ?,
+            updated_at = ?
+        WHERE thread_id = ?
+        """,
+        (
+            title,
+            now,
+            thread_id,
+        ),
+    )
+
+    cursor.execute(
+        """
+        UPDATE projects
+        SET updated_at = ?
+        WHERE project_id = (
+            SELECT project_id
+            FROM chat_threads
+            WHERE thread_id = ?
+        )
+        """,
+        (
+            now,
+            thread_id,
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def delete_thread(thread_id):
+    """
+    Deletes one thread.
+
+    chat_messages and thread_context are deleted automatically because
+    db.py uses ON DELETE CASCADE.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT project_id
+        FROM chat_threads
+        WHERE thread_id = ?
+        """,
+        (thread_id,),
+    )
+
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        return None
+
+    project_id = row[0]
+    now = datetime.now().isoformat()
+
+    cursor.execute(
+        """
+        DELETE FROM chat_threads
+        WHERE thread_id = ?
+        """,
+        (thread_id,),
+    )
+
+    cursor.execute(
+        """
+        UPDATE projects
+        SET updated_at = ?
+        WHERE project_id = ?
+        """,
+        (
+            now,
+            project_id,
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+
+    return project_id
+
+
 def get_latest_thread(project_id):
     conn = get_connection()
     cursor = conn.cursor()
