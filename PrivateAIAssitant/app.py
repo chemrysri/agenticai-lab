@@ -24,7 +24,6 @@ from threads import (
 )
 from users import get_all_users, get_or_create_user
 
-
 def initialize_session_state():
     if "user" not in st.session_state:
         st.session_state.user = None
@@ -451,14 +450,6 @@ def show_sidebar(user):
             help="Example: llama3.2:3b, gemma3:4b, qwen3:4b",
         )
 
-        st.divider()
-
-        show_pdf_upload_section(
-            user=user,
-            model=model,
-        )
-
-        st.divider()
 
         current_thread = get_thread(st.session_state.thread_id)
 
@@ -494,6 +485,74 @@ def show_sidebar(user):
 
     return model, system_prompt, int(context_compaction_n)
 
+def process_uploaded_pdfs(uploaded_pdfs, model):
+    processed_files = []
+    failed_files = []
+
+    for uploaded_pdf in uploaded_pdfs:
+        asset_id = str(uuid.uuid4())
+
+        try:
+            storage_path = save_uploaded_file(
+                uploaded_file=uploaded_pdf,
+                thread_id=st.session_state.thread_id,
+                asset_id=asset_id,
+            )
+
+            extracted_text = extract_pdf_text(storage_path)
+
+            extracted_summary = summarize_pdf_for_thread(
+                file_name=uploaded_pdf.name,
+                extracted_text=extracted_text,
+                model=model,
+            )
+
+            save_thread_asset(
+                asset_id=asset_id,
+                thread_id=st.session_state.thread_id,
+                file_name=uploaded_pdf.name,
+                file_type="pdf",
+                mime_type=uploaded_pdf.type,
+                storage_path=storage_path,
+                extracted_text=extracted_text,
+                extracted_summary=extracted_summary,
+            )
+
+            save_message(
+                thread_id=st.session_state.thread_id,
+                role="user",
+                content=(
+                    f"Uploaded PDF: **{uploaded_pdf.name}**\n\n"
+                    "The PDF was extracted, summarized, and saved as context "
+                    "for this thread."
+                ),
+            )
+
+            processed_files.append(uploaded_pdf.name)
+
+        except Exception as error:
+            failed_files.append(
+                {
+                    "file_name": uploaded_pdf.name,
+                    "error": str(error),
+                }
+            )
+
+    return processed_files, failed_files
+
+
+def get_chat_input_text_and_files(chat_prompt):
+    if chat_prompt is None:
+        return "", []
+
+    if isinstance(chat_prompt, str):
+        return chat_prompt, []
+
+    text = getattr(chat_prompt, "text", "") or chat_prompt.get("text", "")
+    files = getattr(chat_prompt, "files", None) or chat_prompt.get("files", [])
+
+    return text, files
+
 
 def show_chat(user, model, system_prompt, context_compaction_n):
     stored_messages = load_messages(
@@ -504,24 +563,59 @@ def show_chat(user, model, system_prompt, context_compaction_n):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    user_input = st.chat_input("Ask something...")
+    chat_prompt = st.chat_input(
+        "Ask something or attach PDF(s)...",
+        accept_file="multiple",
+        file_type=["pdf"],
+        key=f"chat_input_{st.session_state.thread_id}",
+    )
 
-    if not user_input:
+    user_input, uploaded_pdfs = get_chat_input_text_and_files(chat_prompt)
+
+    if not user_input and not uploaded_pdfs:
         return
 
-    save_message(
-        thread_id=st.session_state.thread_id,
-        role="user",
-        content=user_input,
-    )
+    if uploaded_pdfs:
+        with st.chat_message("user"):
+            st.markdown(
+                f"Attached {len(uploaded_pdfs)} PDF file(s). Processing..."
+            )
 
-    update_thread_title_if_needed(
-        thread_id=st.session_state.thread_id,
-        first_user_message=user_input,
-    )
+        with st.spinner("Processing uploaded PDF(s)..."):
+            processed_files, failed_files = process_uploaded_pdfs(
+                uploaded_pdfs=uploaded_pdfs,
+                model=model,
+            )
 
-    with st.chat_message("user"):
-        st.markdown(user_input)
+        if processed_files:
+            with st.chat_message("assistant"):
+                st.markdown(
+                    "Processed PDF(s):\n\n"
+                    + "\n".join(f"- {file_name}" for file_name in processed_files)
+                )
+
+        if failed_files:
+            with st.chat_message("assistant"):
+                st.error("Some PDF files failed to process.")
+
+                for failed_file in failed_files:
+                    st.markdown(f"**{failed_file['file_name']}**")
+                    st.code(failed_file["error"])
+
+    if user_input:
+        save_message(
+            thread_id=st.session_state.thread_id,
+            role="user",
+            content=user_input,
+        )
+
+        update_thread_title_if_needed(
+            thread_id=st.session_state.thread_id,
+            first_user_message=user_input,
+        )
+
+        with st.chat_message("user"):
+            st.markdown(user_input)
 
     messages_for_model = build_messages_for_model(
         thread_id=st.session_state.thread_id,
@@ -549,7 +643,6 @@ def show_chat(user, model, system_prompt, context_compaction_n):
             model=model,
             context_compaction_n=context_compaction_n,
         )
-
 
 def main():
     st.set_page_config(
@@ -580,7 +673,6 @@ def main():
         system_prompt=system_prompt,
         context_compaction_n=context_compaction_n,
     )
-
 
 if __name__ == "__main__":
     main()
