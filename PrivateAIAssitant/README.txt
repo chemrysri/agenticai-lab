@@ -98,9 +98,11 @@ v0.2:
 - Delete individual chats
 - Export chat as Markdown
 
-UpNext:
 0.2.4
 - Support for PDF inputs
+
+UpNext:
+- Extend ability to search internet for updated info
 
 Notes:
 This app is private as long as it only talks to the local Ollama server.
