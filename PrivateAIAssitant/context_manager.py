@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from assets import get_thread_asset_summaries
 from db import get_connection
 from ollama_client import ask_ollama
 
@@ -199,8 +200,7 @@ def compact_thread_context(thread_id, model):
             "role": "system",
             "content": (
                 "You are the context manager for a private AI assistant. "
-                "Your job is to compact conversation history into a concise, "
-                "useful summary that can be used in future prompts. "
+                "Compact conversation history into a concise useful summary. "
                 "Preserve important decisions, user preferences, project details, "
                 "technical choices, open questions, constraints, and next steps. "
                 "Remove small talk and repeated details."
@@ -249,6 +249,30 @@ def maybe_compact_context(thread_id, model, context_compaction_n):
     return None
 
 
+def build_asset_context_message(thread_id):
+    asset_summaries = get_thread_asset_summaries(thread_id)
+
+    if not asset_summaries:
+        return None
+
+    content = (
+        "The following uploaded PDF assets are available in this thread. "
+        "Use these summaries as supporting context when relevant.\n\n"
+    )
+
+    for asset in asset_summaries:
+        content += (
+            f"File: {asset['file_name']}\n"
+            f"Type: {asset['file_type']}\n"
+            f"Summary:\n{asset['extracted_summary']}\n\n"
+        )
+
+    return {
+        "role": "system",
+        "content": content,
+    }
+
+
 def build_messages_for_model(thread_id, system_prompt):
     context = get_thread_context(thread_id)
 
@@ -258,6 +282,11 @@ def build_messages_for_model(thread_id, system_prompt):
             "content": system_prompt,
         }
     ]
+
+    asset_context_message = build_asset_context_message(thread_id)
+
+    if asset_context_message:
+        messages_for_model.append(asset_context_message)
 
     if context["summary"]:
         messages_for_model.append(

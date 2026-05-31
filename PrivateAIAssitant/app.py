@@ -1,11 +1,16 @@
+import uuid
+
 import streamlit as st
 
+from assets import get_thread_assets, save_thread_asset
 from config import DEFAULT_MODEL
 from context_manager import build_messages_for_model, maybe_compact_context
 from db import init_db
 from export_utils import export_thread_as_markdown
+from media_store import save_uploaded_file
 from messages import clear_thread_messages, load_messages, save_message
 from ollama_client import ask_ollama
+from pdf_processor import extract_pdf_text, summarize_pdf_for_thread
 from projects import create_project, get_latest_project, get_user_projects
 from threads import (
     create_thread,
@@ -30,6 +35,12 @@ def initialize_session_state():
     if "thread_id" not in st.session_state:
         st.session_state.thread_id = None
 
+    if "known_user_select" not in st.session_state:
+        st.session_state.known_user_select = ""
+
+    if "new_username_input" not in st.session_state:
+        st.session_state.new_username_input = ""
+
 
 def show_user_selection():
     known_users = get_all_users()
@@ -38,15 +49,24 @@ def show_user_selection():
 
     selected_user = ""
 
+    user_options = [""] + known_users
+
+    if st.session_state.known_user_select not in user_options:
+        st.session_state.known_user_select = ""
+
     if known_users:
         selected_user = st.selectbox(
             "Known users",
-            options=[""] + known_users,
+            options=user_options,
+            key="known_user_select",
         )
 
-    new_username = st.text_input("Or enter a new username")
+    new_username = st.text_input(
+        "Or enter a new username",
+        key="new_username_input",
+    )
 
-    if st.button("Continue"):
+    if st.button("Continue", key="continue_user_selection"):
         username_to_use = new_username.strip() or selected_user
 
         if not username_to_use:
@@ -122,6 +142,118 @@ def delete_current_thread_and_select_next():
             project_id=deleted_project_id,
             title="New thread",
         )
+
+
+def show_pdf_upload_section(user, model):
+    st.subheader("PDF input")
+
+    uploaded_pdfs = st.file_uploader(
+        "Upload PDF(s) to current chat",
+        type=["pdf"],
+        accept_multiple_files=True,
+        key=f"pdf_uploader_{st.session_state.thread_id}",
+    )
+
+    if not uploaded_pdfs:
+        assets = get_thread_assets(st.session_state.thread_id)
+
+        if assets:
+            with st.expander("PDFs in this chat"):
+                for asset in assets:
+                    st.markdown(f"**{asset['file_name']}**")
+                    st.caption(f"Uploaded at: {asset['created_at']}")
+
+                    if asset["extracted_summary"]:
+                        st.markdown(asset["extracted_summary"])
+
+                    st.divider()
+
+        return
+
+    st.caption(f"{len(uploaded_pdfs)} PDF(s) selected.")
+
+    if st.button(
+        "Process selected PDF(s)",
+        key=f"process_pdfs_{st.session_state.thread_id}",
+    ):
+        processed_count = 0
+        failed_files = []
+
+        for uploaded_pdf in uploaded_pdfs:
+            asset_id = str(uuid.uuid4())
+
+            try:
+                with st.spinner(f"Saving and reading {uploaded_pdf.name}..."):
+                    storage_path = save_uploaded_file(
+                        uploaded_file=uploaded_pdf,
+                        thread_id=st.session_state.thread_id,
+                        asset_id=asset_id,
+                    )
+
+                    extracted_text = extract_pdf_text(storage_path)
+
+                with st.spinner(f"Summarizing {uploaded_pdf.name} locally..."):
+                    extracted_summary = summarize_pdf_for_thread(
+                        file_name=uploaded_pdf.name,
+                        extracted_text=extracted_text,
+                        model=model,
+                    )
+
+                save_thread_asset(
+                    asset_id=asset_id,
+                    thread_id=st.session_state.thread_id,
+                    file_name=uploaded_pdf.name,
+                    file_type="pdf",
+                    mime_type=uploaded_pdf.type,
+                    storage_path=storage_path,
+                    extracted_text=extracted_text,
+                    extracted_summary=extracted_summary,
+                )
+
+                save_message(
+                    thread_id=st.session_state.thread_id,
+                    role="user",
+                    content=(
+                        f"Uploaded PDF: **{uploaded_pdf.name}**\n\n"
+                        "The PDF was extracted, summarized, and saved as context "
+                        "for this thread."
+                    ),
+                )
+
+                processed_count += 1
+
+            except Exception as error:
+                failed_files.append(
+                    {
+                        "file_name": uploaded_pdf.name,
+                        "error": str(error),
+                    }
+                )
+
+        if processed_count:
+            st.success(f"Processed {processed_count} PDF(s).")
+
+        if failed_files:
+            st.error("Some PDFs failed to process.")
+
+            for failed_file in failed_files:
+                st.write(f"**{failed_file['file_name']}**")
+                st.code(failed_file["error"])
+
+        st.rerun()
+
+    assets = get_thread_assets(st.session_state.thread_id)
+
+    if assets:
+        with st.expander("PDFs in this chat"):
+            for asset in assets:
+                st.markdown(f"**{asset['file_name']}**")
+                st.caption(f"Uploaded at: {asset['created_at']}")
+
+                if asset["extracted_summary"]:
+                    st.markdown(asset["extracted_summary"])
+
+                st.divider()
 
 
 def show_sidebar(user):
@@ -286,7 +418,7 @@ def show_sidebar(user):
             with st.expander("Delete current chat"):
                 st.warning(
                     "This permanently deletes the current chat, including "
-                    "its messages and compacted context."
+                    "its messages, compacted context, and uploaded assets."
                 )
 
                 confirm_delete = st.checkbox(
@@ -318,6 +450,15 @@ def show_sidebar(user):
             value=DEFAULT_MODEL,
             help="Example: llama3.2:3b, gemma3:4b, qwen3:4b",
         )
+
+        st.divider()
+
+        show_pdf_upload_section(
+            user=user,
+            model=model,
+        )
+
+        st.divider()
 
         current_thread = get_thread(st.session_state.thread_id)
 

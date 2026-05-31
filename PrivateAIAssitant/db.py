@@ -102,6 +102,26 @@ def init_db():
 
     cursor.execute(
         """
+        CREATE TABLE IF NOT EXISTS thread_assets (
+            asset_id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            file_type TEXT NOT NULL,
+            mime_type TEXT,
+            storage_path TEXT NOT NULL,
+            extracted_text TEXT,
+            extracted_summary TEXT,
+            created_at TEXT NOT NULL,
+
+            FOREIGN KEY (thread_id)
+                REFERENCES chat_threads (thread_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+
+    cursor.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_projects_user
         ON projects (user_id)
         """
@@ -128,6 +148,13 @@ def init_db():
         """
     )
 
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_thread_assets_thread
+        ON thread_assets (thread_id)
+        """
+    )
+
     conn.commit()
     conn.close()
 
@@ -142,6 +169,7 @@ def reset_db():
     conn = get_connection()
     cursor = conn.cursor()
 
+    cursor.execute("DROP TABLE IF EXISTS thread_assets")
     cursor.execute("DROP TABLE IF EXISTS thread_context")
     cursor.execute("DROP TABLE IF EXISTS chat_messages")
     cursor.execute("DROP TABLE IF EXISTS chat_threads")
