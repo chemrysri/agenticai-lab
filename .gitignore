@@ -1,1 +1,18 @@
 *.db
+# Uploaded files
+data/uploads/*
+
+# pycache
+*__pycache_/*
+*.pyc
+.env
+
+# Local database
+PrivateAIAssitant/assistant.db
+
+# Uploaded files
+PrivateAIAssitant/data/uploads/*
+!PrivateAIAssitant/data/uploads/.gitkeep
+
+# SearXNG runtime/cache if any
+mcp_tools/searxng/data/

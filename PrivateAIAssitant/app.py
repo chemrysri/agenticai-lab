@@ -23,6 +23,12 @@ from threads import (
     update_thread_title_if_needed,
 )
 from users import get_all_users, get_or_create_user
+from mcp_client import (
+    MCPToolError,
+    call_search_web,
+    format_search_results_for_display,
+    format_search_results_for_model,
+)
 
 def initialize_session_state():
     if "user" not in st.session_state:
@@ -450,6 +456,31 @@ def show_sidebar(user):
             help="Example: llama3.2:3b, gemma3:4b, qwen3:4b",
         )
 
+        st.divider()
+
+        st.subheader("Internet search")
+
+        enable_web_search = st.toggle(
+            "Search the internet for latest updates",
+            value=False,
+            help=(
+                "Uses your local MCP search tool, which calls your local SearXNG instance."
+            ),
+        )
+
+        web_search_results_count = st.number_input(
+            "Number of search results",
+            min_value=1,
+            max_value=10,
+            value=5,
+            step=1,
+        )
+
+        web_search_time_range = st.selectbox(
+            "Search time range",
+            options=["any", "day", "month", "year"],
+            index=0,
+        )
 
         current_thread = get_thread(st.session_state.thread_id)
 
@@ -483,7 +514,14 @@ def show_sidebar(user):
             )
             st.success("Thread settings saved.")
 
-    return model, system_prompt, int(context_compaction_n)
+    return (
+        model,
+        system_prompt,
+        int(context_compaction_n),
+        enable_web_search,
+        int(web_search_results_count),
+        web_search_time_range,
+    )
 
 def process_uploaded_pdfs(uploaded_pdfs, model):
     processed_files = []
@@ -554,7 +592,15 @@ def get_chat_input_text_and_files(chat_prompt):
     return text, files
 
 
-def show_chat(user, model, system_prompt, context_compaction_n):
+def show_chat(
+    user,
+    model,
+    system_prompt,
+    context_compaction_n,
+    enable_web_search,
+    web_search_results_count,
+    web_search_time_range,
+):
     stored_messages = load_messages(
         thread_id=st.session_state.thread_id,
     )
@@ -622,6 +668,41 @@ def show_chat(user, model, system_prompt, context_compaction_n):
         system_prompt=system_prompt,
     )
 
+    web_context_message = None
+
+    if enable_web_search and user_input:
+        try:
+            with st.spinner("Searching the internet using local MCP tool..."):
+                search_response = call_search_web(
+                    query=user_input,
+                    max_results=web_search_results_count,
+                    language="en",
+                    time_range=(
+                        None
+                        if web_search_time_range == "any"
+                        else web_search_time_range
+                    ),
+                )
+
+            web_context_message = {
+                "role": "system",
+                "content": format_search_results_for_model(search_response),
+            }
+
+            with st.expander("Web search results used"):
+                st.markdown(format_search_results_for_display(search_response))
+
+        except MCPToolError as error:
+            with st.chat_message("assistant"):
+                st.warning(f"MCP search tool failed: {error}")
+
+        except Exception as error:
+            with st.chat_message("assistant"):
+                st.warning(f"Internet search failed: {error}")
+
+    if web_context_message:
+        messages_for_model.insert(1, web_context_message)
+
     with st.chat_message("assistant"):
         with st.spinner("Thinking locally..."):
             assistant_reply = ask_ollama(
@@ -665,13 +746,23 @@ def main():
 
     ensure_current_project_and_thread_exist(user)
 
-    model, system_prompt, context_compaction_n = show_sidebar(user)
+    (
+        model,
+        system_prompt,
+        context_compaction_n,
+        enable_web_search,
+        web_search_results_count,
+        web_search_time_range,
+    ) = show_sidebar(user)
 
     show_chat(
         user=user,
         model=model,
         system_prompt=system_prompt,
         context_compaction_n=context_compaction_n,
+        enable_web_search=enable_web_search,
+        web_search_results_count=web_search_results_count,
+        web_search_time_range=web_search_time_range,
     )
 
 if __name__ == "__main__":

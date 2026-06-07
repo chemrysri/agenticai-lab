@@ -101,8 +101,11 @@ v0.2:
 0.2.4
 - Support for PDF inputs
 
+1.0.0
+- Extend ability to search internet for updated info using mcp tools
+
 UpNext:
-- Extend ability to search internet for updated info
+- Upgrade internet search to do some conceptual search instead of just plain text search
 
 Notes:
 This app is private as long as it only talks to the local Ollama server.

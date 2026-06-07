@@ -10,3 +10,5 @@ DEFAULT_SYSTEM_PROMPT = (
 # Counts total messages: user + assistant.
 # Example: 10 means roughly every 5 back-and-forth turns.
 DEFAULT_CONTEXT_COMPACTION_N = 10
+
+MCP_SEARCH_SERVER_URL = "http://localhost:8000/mcp"
