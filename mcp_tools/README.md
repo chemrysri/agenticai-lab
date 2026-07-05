@@ -37,6 +37,77 @@ Planned tools:
 
 ---
 
+## Quick Start on Windows
+
+Run the following commands from the `agenticai-lab` repository root.
+
+### One-time setup
+
+Create one virtual environment for the Streamlit application and MCP server:
+
+```powershell
+python -m venv .venv
+
+.\.venv\Scripts\python.exe -m pip install `
+  -r .\PrivateAIAssitant\requirements.txt `
+  -r .\mcp_tools\requirements.txt
+
+ollama pull llama3.2:3b
+```
+
+### Start the application
+
+Keep each process running in a separate PowerShell terminal.
+
+#### Terminal 1: Ollama
+
+```powershell
+ollama serve
+```
+
+Skip this command if Ollama is already running as a Windows background service.
+
+#### Terminal 2: SearXNG
+
+```powershell
+cd .\mcp_tools\searxng
+docker compose up -d
+docker compose ps
+```
+
+#### Terminal 3: MCP server
+
+```powershell
+cd .\mcp_tools
+..\.venv\Scripts\python.exe server.py
+```
+
+Leave this terminal running. The MCP endpoint is available at:
+
+```text
+http://localhost:8000/mcp
+```
+
+#### Terminal 4: Streamlit application
+
+```powershell
+cd .\PrivateAIAssitant
+..\.venv\Scripts\python.exe -m streamlit run app.py
+```
+
+Open the local URL printed by Streamlit. To test conceptual search, enable
+**Search the internet for latest updates**, submit a current-information
+question, and expand **Web search results used** to inspect the generated
+queries and ranked results.
+
+The required startup order is:
+
+```text
+Ollama -> SearXNG -> MCP server -> Streamlit application
+```
+
+---
+
 ## Folder Structure
 
 Recommended structure:
@@ -259,6 +330,26 @@ The MCP server should expose tools at:
 http://localhost:8000/mcp
 ```
 
+Do not use a browser to test this URL as if it were a normal web page. The MCP
+endpoint requires an MCP client and the `text/event-stream` protocol. Opening it
+directly in a browser may return:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "server-error",
+  "error": {
+    "code": -32600,
+    "message": "Not Acceptable: Client must accept text/event-stream"
+  }
+}
+```
+
+This response is expected and confirms that the MCP server is reachable. Test
+the complete integration through `PrivateAIAssitant/mcp_client.py` by starting
+the Streamlit app, enabling web search, and submitting a question. The MCP
+client supplies the required protocol headers automatically.
+
 ---
 
 ## Application Integration
@@ -359,22 +450,22 @@ Current behavior:
 
 ```text
 If web search toggle is ON:
-    use the latest user message as the search query
-    call MCP search_web
-    inject search results into model context
+    ask Ollama for complementary conceptual search queries
+    call MCP search_web once per generated query
+    deduplicate results by normalized URL
+    rank results by search position, query coverage, and text relevance
+    inject the highest-ranked evidence into model context
 ```
 
-This is intentionally simple for the first version.
+If query generation fails or Ollama returns invalid JSON, the app falls back to
+searching the original user message.
 
-Future improved behavior:
+Future behavior:
 
 ```text
 If web search toggle is ON:
     decide whether search is actually needed
-    rewrite the user request into better conceptual search queries
-    run one or more searches
-    rank/filter results
-    inject only relevant evidence into the model context
+    search only when current information or external evidence is needed
 ```
 
 The long-term meaning of the toggle should be:
@@ -583,20 +674,56 @@ MCP_SEARCH_SERVER_URL = "http://localhost:8000/mcp"
 
 ### Search results are weak or irrelevant
 
-Current search behavior is simple.
-
-It searches the raw latest user message.
-
-Future improvement should add:
+Inspect the generated queries shown in the app's search-results expander. If
+they miss the user's intent, improve the query-planning prompt in
+`PrivateAIAssitant/search_agent.py`. Future ranking improvements can add:
 
 ```text
 - search intent detection
-- query rewriting
-- conceptual search
-- multiple search queries
-- result ranking
+- source quality signals
+- freshness scoring
 - source filtering
 ```
+
+---
+
+## Next Steps: Grounded Web Answers
+
+Conceptual query generation improves search coverage, but retrieval alone does
+not guarantee a clean or reliable answer. The next phase should improve evidence
+validation and answer synthesis.
+
+### Current limitation notes
+
+- SearXNG snippets can be incomplete. A high-ranked result may identify the
+  finalists without containing the winner, score, or other requested fact.
+- Ranking currently rewards search position, query coverage, and text overlap.
+  It does not yet measure source authority, factual completeness, or freshness.
+- Search results can contain stale or mismatched URLs, such as a page title that
+  mentions the requested year while the URL points to an older season.
+- The assistant currently receives snippets rather than the full content of the
+  highest-ranked pages, so important supporting details can be missing.
+- Small local models such as `llama3.2:3b` can add generic recommendations or
+  canned knowledge-cutoff disclaimers even when current evidence is available.
+- The answer prompt does not yet strictly require direct answers, claim-level
+  citations, or explicit handling of conflicting sources.
+
+### Planned improvements
+
+1. Reject or penalize results whose URL, title, or date conflicts with the
+   requested time period.
+2. Add source-quality signals and prefer official or established sources where
+   appropriate.
+3. Fetch and extract content from the highest-ranked pages instead of relying
+   only on search snippets.
+4. Add a grounded synthesis step that answers only from the collected evidence.
+5. Suppress knowledge-cutoff disclaimers when sufficient current evidence is
+   present.
+6. Require citations beside supported claims and explicitly identify conflicts
+   or missing evidence.
+7. Evaluate a stronger local model, such as a suitable 8B model, for query
+   planning and evidence synthesis.
+8. Decide automatically whether a user request actually requires web search.
 
 ---
 
@@ -609,17 +736,21 @@ Implemented:
 - SearXNG-backed search_web tool
 - Streamable HTTP MCP endpoint
 - Streamlit app can call MCP search
-- Search results can be injected into Ollama context
+- Ollama-generated conceptual search queries
+- Multi-query result deduplication and ranking
+- Ranked search evidence injected into Ollama context
+- Restricted filesystem read tools
+- Read-only SQLite inspection tools
 ```
 
 Planned:
 
 ```text
-- Conceptual search query generation
-- Better source ranking
+- Grounded page-content extraction and answer synthesis
+- Source authority, freshness, and date-consistency ranking
+- Claim-level citations and conflict handling
 - Search history in SQLite
-- Filesystem tools
-- SQLite tools
+- Automatic search-need detection
 - Calendar tools
 - Additional local tools
 ```

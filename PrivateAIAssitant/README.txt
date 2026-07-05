@@ -104,8 +104,18 @@ v0.2:
 1.0.0
 - Extend ability to search internet for updated info using mcp tools
 
+1.1.0
+- Generate conceptual search queries locally with Ollama
+- Search once per query through MCP and SearXNG
+- Deduplicate and rank results before adding evidence to the model prompt
+
 UpNext:
-- Upgrade internet search to do some conceptual search instead of just plain text search
+- Build grounded web-answer synthesis using extracted page content
+- Add source authority, freshness, and requested-year validation
+- Require claim-level citations and conflict handling
+- Avoid knowledge-cutoff disclaimers when current evidence is available
+- Evaluate a stronger local model for evidence synthesis
+- Decide automatically when a user request needs web search
 
 Notes:
 This app is private as long as it only talks to the local Ollama server.

@@ -25,10 +25,10 @@ from threads import (
 from users import get_all_users, get_or_create_user
 from mcp_client import (
     MCPToolError,
-    call_search_web,
     format_search_results_for_display,
     format_search_results_for_model,
 )
+from search_agent import run_conceptual_search
 
 def initialize_session_state():
     if "user" not in st.session_state:
@@ -672,9 +672,10 @@ def show_chat(
 
     if enable_web_search and user_input:
         try:
-            with st.spinner("Searching the internet using local MCP tool..."):
-                search_response = call_search_web(
-                    query=user_input,
+            with st.spinner("Planning conceptual queries and searching the web..."):
+                search_response = run_conceptual_search(
+                    user_query=user_input,
+                    model=model,
                     max_results=web_search_results_count,
                     language="en",
                     time_range=(
