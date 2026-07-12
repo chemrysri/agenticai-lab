@@ -450,11 +450,12 @@ Current behavior:
 
 ```text
 If web search toggle is ON:
+    rewrite follow-up questions into standalone search requests using recent context
     ask Ollama for complementary conceptual search queries
     call MCP search_web once per generated query
     deduplicate results by normalized URL
-    rank results by search position, query coverage, and text relevance
-    inject the highest-ranked evidence into model context
+    rank results by search position, query coverage, text relevance, and basic evidence-quality notes
+    attach the highest-ranked evidence to the final user task
 ```
 
 If query generation fails or Ollama returns invalid JSON, the app falls back to
@@ -479,6 +480,49 @@ not:
 ```text
 Always search the exact latest user message
 ```
+
+---
+
+## Known Factors Affecting Search Results
+
+The current web-search flow is useful but still experimental. Recent trials
+showed two broad sources of quality issues: the local answer model and the
+SearXNG/snippet-based retrieval layer.
+
+### Model factors
+
+- Small local models such as `llama3.2:3b` can ignore retrieved evidence and
+  fall back to generic knowledge-cutoff or real-time-access disclaimers.
+- The model can over-infer from partial snippets, titles, or URLs when the
+  requested detail is not explicitly visible.
+- Prompting and evidence-quality notes reduce this behavior but do not fully
+  solve it.
+- Dense, conflicting, or incomplete search results need a stronger grounded
+  synthesis step than a simple chat prompt.
+- A stronger local model, such as an 8B-class model that fits the machine, should
+  be evaluated for query rewriting and evidence synthesis.
+
+### SearXNG/tool factors
+
+- SearXNG returns search-result snippets, not guaranteed full page content.
+- Snippets can omit the exact requested fact even when the linked page likely
+  contains it.
+- Results can include stale URLs, mismatched years, speculative pages, or pages
+  whose title looks relevant but whose visible snippet is incomplete.
+- Ranking currently improves relevance but does not prove factual completeness.
+- The next reliable step is to fetch and extract content from the top ranked
+  pages before asking the model to synthesize an answer.
+
+### Latest trial notes
+
+- Conceptual multi-query search improved coverage, but short follow-up requests
+  could lose context without a standalone-query rewrite step.
+- Follow-up rewriting now uses recent conversation context before query
+  generation.
+- Fresh web evidence is now attached directly to the final user task so local
+  models are less likely to ignore it.
+- Evidence-quality notes and extracted-fact notes are shown in the Streamlit
+  expander, but these are guardrails rather than a complete reliability solution.
 
 ---
 
@@ -697,16 +741,17 @@ validation and answer synthesis.
 
 - SearXNG snippets can be incomplete. A high-ranked result may identify the
   finalists without containing the winner, score, or other requested fact.
-- Ranking currently rewards search position, query coverage, and text overlap.
-  It does not yet measure source authority, factual completeness, or freshness.
+- Ranking currently uses search position, query coverage, text overlap, and
+  basic evidence-quality notes. It still does not prove source authority,
+  factual completeness, or freshness.
 - Search results can contain stale or mismatched URLs, such as a page title that
   mentions the requested year while the URL points to an older season.
 - The assistant currently receives snippets rather than the full content of the
   highest-ranked pages, so important supporting details can be missing.
 - Small local models such as `llama3.2:3b` can add generic recommendations or
   canned knowledge-cutoff disclaimers even when current evidence is available.
-- The answer prompt does not yet strictly require direct answers, claim-level
-  citations, or explicit handling of conflicting sources.
+- The answer prompt has been strengthened, but robust grounded answers still
+  need extracted page content, claim-level citations, and conflict handling.
 
 ### Planned improvements
 

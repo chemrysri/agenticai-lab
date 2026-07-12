@@ -30,6 +30,87 @@ from mcp_client import (
 )
 from search_agent import run_conceptual_search
 
+
+def ground_latest_user_message_with_context(messages, evidence_text):
+    """
+    Attach fresh retrieval context directly to the latest user message.
+
+    Small local models can treat a separate system retrieval message as optional
+    background and still fall back to model-memory boilerplate. Making the
+    evidence part of the final user task gives the answer model a clearer job:
+    answer this exact request using the fresh search evidence.
+    """
+    latest_user_index = None
+
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].get("role") == "user":
+            latest_user_index = index
+            break
+
+    if latest_user_index is None:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Answer using the fresh web evidence below.\n\n"
+                    f"{evidence_text}"
+                ),
+            }
+        )
+        return messages
+
+    original_user_request = messages[latest_user_index].get("content", "")
+    messages[latest_user_index]["content"] = (
+        "Answer the user's current request using the fresh web evidence below.\n"
+        "Do not reply with a generic knowledge-cutoff or real-time-access "
+        "disclaimer when the evidence contains relevant current information. "
+        "Use only claims supported by the provided evidence. If the evidence is "
+        "incomplete or ambiguous, give the useful facts that are supported and "
+        "clearly say which requested details are missing or uncertain. Do not "
+        "invent values, outcomes, names, dates, or details that are not visible "
+        "in the evidence. If extracted facts are present, prefer those over your "
+        "own inference.\n\n"
+        f"Current user request:\n{original_user_request}\n\n"
+        f"{evidence_text}"
+    )
+
+    return messages
+
+
+def build_recent_search_context(messages, max_messages=6, max_chars=2000):
+    """
+    Build compact recent chat context for resolving follow-up search queries.
+
+    Example: if the user first asks about a specific event and then asks
+    "who won", search should inherit the event instead of searching the
+    follow-up phrase globally.
+    """
+    context_lines = []
+
+    for message in reversed(messages):
+        role = message.get("role")
+
+        if role not in {"user", "assistant"}:
+            continue
+
+        content = " ".join((message.get("content") or "").split())
+
+        if not content:
+            continue
+
+        context_lines.append(f"{role}: {content[:500]}")
+
+        if len(context_lines) >= max_messages:
+            break
+
+    context = "\n".join(reversed(context_lines))
+
+    if len(context) > max_chars:
+        return context[-max_chars:]
+
+    return context
+
+
 def initialize_session_state():
     if "user" not in st.session_state:
         st.session_state.user = None
@@ -683,6 +764,9 @@ def show_chat(
                         if web_search_time_range == "any"
                         else web_search_time_range
                     ),
+                    conversation_context=build_recent_search_context(
+                        messages_for_model
+                    ),
                 )
 
             web_context_message = {
@@ -702,7 +786,10 @@ def show_chat(
                 st.warning(f"Internet search failed: {error}")
 
     if web_context_message:
-        messages_for_model.insert(1, web_context_message)
+        ground_latest_user_message_with_context(
+            messages_for_model,
+            web_context_message["content"],
+        )
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking locally..."):

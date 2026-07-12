@@ -8,6 +8,9 @@ def ask_ollama(messages, model):
         "model": model,
         "messages": messages,
         "stream": False,
+        "options": {
+            "temperature": 0,
+        },
     }
 
     try:
